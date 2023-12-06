@@ -9,6 +9,7 @@ import os
 import time
 import re
 import sys
+from summarizer import t5_summarize
 
 from tqdm import tqdm
 from streaming_llm.utils import load, download_url, load_jsonl
@@ -54,14 +55,18 @@ def greedy_generate(model, tokenizer, input_ids, past_key_values, max_gen_len):
         if pred_token_idx == tokenizer.eos_token_id:
             break
     print(" ".join(generated_text[pos:]), flush=True)
-    return past_key_values
+    return past_key_values,  " ".join(generated_text[pos:])
 
 
 @torch.no_grad()
 def streaming_inference(model, tokenizer, prompts, kv_cache=None, max_gen_len=1000):
     past_key_values = None
+    past_summary = ""
     for idx, prompt in enumerate(prompts):
-        prompt = "USER: " + prompt + "\n\nASSISTANT: "
+        prompt = "USER: " + prompt
+        if past_summary:
+            prompt = "PAST INFO: " + past_summary
+        prompt = prompt + "\n\nASSISTANT: "
         print("\n" + prompt, end="")
         input_ids = tokenizer(prompt, return_tensors="pt").input_ids
         input_ids = input_ids.to(model.device)
@@ -70,9 +75,13 @@ def streaming_inference(model, tokenizer, prompts, kv_cache=None, max_gen_len=10
             space_needed = seq_len + max_gen_len
             past_key_values = kv_cache.evict_for_space(past_key_values, space_needed)
 
-        past_key_values = greedy_generate(
+        past_key_value, generated_text = greedy_generate(
             model, tokenizer, input_ids, past_key_values, max_gen_len=max_gen_len
         )
+        print("gen text into summarizer: ", generated_text)
+        past_summary = t5_summarize(generated_text)
+        # if torch.cuda.is_available():
+        #     torch.cuda.set_device("cuda")
 
 
 def main(args):
